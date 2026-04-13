@@ -75,7 +75,7 @@
     <span class="ctrl-label">模型</span>
     <div class="model-btns">
       <button class="model-btn active" id="btn-mobile" onclick="switchModel('mobilenet_v2')">轻量版<br><span style="font-size:10px;color:#888">快 · 约20MB</span></button>
-      <button class="model-btn" id="btn-inception" onclick="switchModel('inception_v2')">精准版<br><span style="font-size:10px;color:#888">慢 · 约90MB</span></button>
+      <button class="model-btn" id="btn-inception" onclick="switchModel('mobilenet_v1')">精准版<br><span style="font-size:10px;color:#888">慢 · 约30MB</span></button>
     </div>
   </div>
   <div class="ctrl-row">
@@ -122,13 +122,13 @@ async function switchModel(base) {
   currentBase = base;
 
   document.getElementById('btn-mobile').classList.toggle('active', base === 'mobilenet_v2');
-  document.getElementById('btn-inception').classList.toggle('active', base === 'inception_v2');
+  document.getElementById('btn-inception').classList.toggle('active', base === 'mobilenet_v1');
 
   if (animFrame) cancelAnimationFrame(animFrame);
   model = null;
   loadingEl.style.display = 'flex';
-  loadingTxt.textContent = base === 'inception_v2'
-    ? '加载精准版模型（约90MB，请耐心等待）...'
+  loadingTxt.textContent = base === 'mobilenet_v1'
+    ? '加载精准版模型（约30MB，请耐心等待）...'
     : '加载轻量版模型...';
 
   await loadModel(base);
