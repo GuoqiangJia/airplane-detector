@@ -7,10 +7,38 @@
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { background: #000; display: flex; flex-direction: column; align-items: center; min-height: 100vh; font-family: sans-serif; color: #fff; }
-  #status { padding: 14px 20px; font-size: 15px; color: #aaa; text-align: center; width: 100%; }
+
+  #controls {
+    width: 100%; max-width: 640px;
+    padding: 12px 16px;
+    display: flex; flex-direction: column; gap: 10px;
+    background: #111;
+  }
+
+  .ctrl-row {
+    display: flex; align-items: center; gap: 10px; font-size: 13px;
+  }
+  .ctrl-label { color: #aaa; width: 80px; flex-shrink: 0; }
+  .ctrl-value { color: #fff; width: 36px; text-align: right; flex-shrink: 0; }
+
+  input[type=range] {
+    flex: 1; height: 4px; accent-color: #e53e3e;
+  }
+
+  .model-btns { display: flex; gap: 8px; flex: 1; }
+  .model-btn {
+    flex: 1; padding: 6px 0; border-radius: 6px; border: 1px solid #444;
+    background: #222; color: #aaa; font-size: 12px; cursor: pointer;
+    transition: all 0.2s;
+  }
+  .model-btn.active { background: #e53e3e; border-color: #e53e3e; color: #fff; }
+
+  #status { padding: 10px 16px; font-size: 13px; color: #aaa; text-align: center; width: 100%; }
+
   #container { position: relative; width: 100%; max-width: 640px; }
   video { width: 100%; display: block; }
   canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+
   #badge {
     position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
     background: #e53e3e; color: #fff; padding: 8px 20px;
@@ -19,12 +47,47 @@
     box-shadow: 0 2px 12px rgba(229,62,62,0.5);
   }
   #fps { position: fixed; bottom: 16px; right: 16px; font-size: 12px; color: #555; }
+  #loading {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.85);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    z-index: 20; gap: 16px;
+  }
+  .spinner {
+    width: 40px; height: 40px; border: 3px solid #333;
+    border-top-color: #e53e3e; border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loading p { font-size: 14px; color: #aaa; }
 </style>
 </head>
 <body>
 
-<div id="status">正在加载检测模型，请稍候...</div>
+<div id="loading">
+  <div class="spinner"></div>
+  <p id="loading-text">正在启动摄像头...</p>
+</div>
+
 <div id="badge">✈ 检测到飞机！</div>
+
+<div id="controls">
+  <div class="ctrl-row">
+    <span class="ctrl-label">模型</span>
+    <div class="model-btns">
+      <button class="model-btn active" id="btn-mobile" onclick="switchModel('mobilenet_v2')">轻量版<br><span style="font-size:10px;color:#888">快 · 约20MB</span></button>
+      <button class="model-btn" id="btn-inception" onclick="switchModel('inception_v2')">精准版<br><span style="font-size:10px;color:#888">慢 · 约90MB</span></button>
+    </div>
+  </div>
+  <div class="ctrl-row">
+    <span class="ctrl-label">置信度</span>
+    <input type="range" id="threshold" min="5" max="80" value="40" step="5"
+           oninput="document.getElementById('thresh-val').textContent=this.value+'%'">
+    <span class="ctrl-value" id="thresh-val">40%</span>
+  </div>
+</div>
+
+<div id="status"></div>
+
 <div id="container">
   <video id="video" autoplay playsinline muted></video>
   <canvas id="canvas"></canvas>
@@ -34,17 +97,57 @@
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
 <script>
-const video   = document.getElementById('video');
-const canvas  = document.getElementById('canvas');
-const ctx     = canvas.getContext('2d');
-const status  = document.getElementById('status');
-const badge   = document.getElementById('badge');
-const fpsEl   = document.getElementById('fps');
+const video      = document.getElementById('video');
+const canvas     = document.getElementById('canvas');
+const ctx        = canvas.getContext('2d');
+const badge      = document.getElementById('badge');
+const fpsEl      = document.getElementById('fps');
+const loadingEl  = document.getElementById('loading');
+const loadingTxt = document.getElementById('loading-text');
+const statusEl   = document.getElementById('status');
+const threshEl   = document.getElementById('threshold');
 
-let model, lastTime = 0, frameCount = 0, fps = 0;
+let model = null;
+let currentBase = 'mobilenet_v2';
+let isLoadingModel = false;
+let animFrame = null;
+let lastTime = 0, frameCount = 0, fps = 0;
+
+function getThreshold() {
+  return parseInt(threshEl.value) / 100;
+}
+
+async function switchModel(base) {
+  if (isLoadingModel || base === currentBase) return;
+  currentBase = base;
+
+  document.getElementById('btn-mobile').classList.toggle('active', base === 'mobilenet_v2');
+  document.getElementById('btn-inception').classList.toggle('active', base === 'inception_v2');
+
+  if (animFrame) cancelAnimationFrame(animFrame);
+  model = null;
+  loadingEl.style.display = 'flex';
+  loadingTxt.textContent = base === 'inception_v2'
+    ? '加载精准版模型（约90MB，请耐心等待）...'
+    : '加载轻量版模型...';
+
+  await loadModel(base);
+  loadingEl.style.display = 'none';
+  detect();
+}
+
+async function loadModel(base) {
+  isLoadingModel = true;
+  try {
+    model = await cocoSsd.load({ base });
+  } catch(e) {
+    statusEl.textContent = '模型加载失败：' + e.message;
+  }
+  isLoadingModel = false;
+}
 
 async function init() {
-  // 1. 启动摄像头
+  // 启动摄像头
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
@@ -54,43 +157,45 @@ async function init() {
     await new Promise(r => video.onloadedmetadata = r);
     canvas.width  = video.videoWidth;
     canvas.height = video.videoHeight;
-    status.textContent = '摄像头已开启，正在加载 AI 模型...';
-  } catch (e) {
-    status.textContent = '无法访问摄像头：' + e.message;
+    loadingTxt.textContent = '加载 AI 模型（约20MB）...';
+  } catch(e) {
+    loadingTxt.textContent = '无法访问摄像头：' + e.message;
     return;
   }
 
-  // 2. 加载 COCO-SSD 模型
-  try {
-    model = await cocoSsd.load({ base: 'mobilenet_v2' });
-    status.textContent = '模型加载完成，开始检测...';
-    setTimeout(() => status.style.display = 'none', 1500);
-    detect();
-  } catch (e) {
-    status.textContent = '模型加载失败：' + e.message;
-  }
+  await loadModel('mobilenet_v2');
+  loadingEl.style.display = 'none';
+  detect();
 }
 
 async function detect() {
-  if (!model || video.readyState < 2) { requestAnimationFrame(detect); return; }
+  if (!model || video.readyState < 2) {
+    animFrame = requestAnimationFrame(detect);
+    return;
+  }
 
-  const predictions = await model.detect(video);
+  const threshold = getThreshold();
+  let predictions = [];
+  try {
+    predictions = await model.detect(video);
+  } catch(e) {
+    animFrame = requestAnimationFrame(detect);
+    return;
+  }
 
-  // 清空画布
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   const airplanes = predictions.filter(p =>
-    p.class === 'airplane' && p.score > 0.4
+    p.class === 'airplane' && p.score > threshold
   );
 
-  // 画红框
   airplanes.forEach(p => {
     const [x, y, w, h] = p.bbox;
+    // 红框
     ctx.strokeStyle = '#e53e3e';
-    ctx.lineWidth   = 3;
+    ctx.lineWidth = 3;
     ctx.strokeRect(x, y, w, h);
-
-    // 标签背景
+    // 标签
     const label = `飞机 ${Math.round(p.score * 100)}%`;
     ctx.font = 'bold 16px sans-serif';
     const tw = ctx.measureText(label).width;
@@ -100,24 +205,17 @@ async function detect() {
     ctx.fillText(label, x + 7, y - 7);
   });
 
-  // 顶部提示条
-  if (airplanes.length > 0) {
-    badge.style.display = 'block';
-  } else {
-    badge.style.display = 'none';
-  }
+  badge.style.display = airplanes.length > 0 ? 'block' : 'none';
 
-  // FPS 计算
+  // FPS
   frameCount++;
   const now = performance.now();
   if (now - lastTime >= 1000) {
-    fps = frameCount;
-    frameCount = 0;
-    lastTime = now;
+    fps = frameCount; frameCount = 0; lastTime = now;
     fpsEl.textContent = fps + ' fps';
   }
 
-  requestAnimationFrame(detect);
+  animFrame = requestAnimationFrame(detect);
 }
 
 init();
