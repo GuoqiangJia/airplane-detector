@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>飞机检测 Demo · YOLO26n</title>
+  <title>无人机检测 Demo · YOLO26l</title>
   <style>
     * {
       margin: 0;
@@ -47,7 +47,7 @@
 
     .ctrl-value {
       color: #fff;
-      width: 36px;
+      width: 40px;
       text-align: right;
       flex-shrink: 0;
     }
@@ -58,25 +58,25 @@
       accent-color: #e53e3e;
     }
 
-    .model-btns {
+    .freq-btns {
       display: flex;
-      gap: 8px;
+      gap: 6px;
       flex: 1;
     }
 
-    .model-btn {
+    .freq-btn {
       flex: 1;
-      padding: 6px 0;
+      padding: 5px 0;
       border-radius: 6px;
       border: 1px solid #444;
       background: #222;
       color: #aaa;
-      font-size: 12px;
+      font-size: 11px;
       cursor: pointer;
       transition: all 0.2s;
     }
 
-    .model-btn.active {
+    .freq-btn.active {
       background: #e53e3e;
       border-color: #e53e3e;
       color: #fff;
@@ -84,11 +84,11 @@
 
     #status {
       padding: 8px 16px;
-      font-size: 12px;
-      color: #666;
+      font-size: 11px;
+      color: #555;
       text-align: center;
       width: 100%;
-      min-height: 30px;
+      min-height: 28px;
     }
 
     #container {
@@ -125,20 +125,33 @@
       z-index: 10;
       letter-spacing: 1px;
       box-shadow: 0 2px 12px rgba(229, 62, 62, 0.5);
+      animation: pulse 1s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        box-shadow: 0 2px 12px rgba(229, 62, 62, 0.5);
+      }
+
+      50% {
+        box-shadow: 0 2px 24px rgba(229, 62, 62, 0.9);
+      }
     }
 
     #fps {
       position: fixed;
       bottom: 16px;
       right: 16px;
-      font-size: 12px;
-      color: #555;
+      font-size: 11px;
+      color: #444;
     }
 
     #loading {
       position: fixed;
       inset: 0;
-      background: rgba(0, 0, 0, 0.88);
+      background: rgba(0, 0, 0, 0.9);
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -202,18 +215,20 @@
     <p id="progress-text"></p>
   </div>
 
-  <div id="badge">✈ 检测到飞机！</div>
+  <div id="badge">🚁 检测到无人机！</div>
 
   <div id="controls">
     <div class="ctrl-row">
-      <span class="ctrl-label">YOLO 模型</span>
-      <div class="model-btns">
-        <button class="model-btn active" id="btn-n" onclick="switchModel('yolo26n')">
-          YOLO26n<br><span style="font-size:10px;color:#888">快 · 9.7MB</span>
-        </button>
-        <button class="model-btn" id="btn-s" onclick="switchModel('yolo26s')">
-          YOLO26s<br><span style="font-size:10px;color:#888">准 · 38MB</span>
-        </button>
+      <span class="ctrl-label">检测频率</span>
+      <div class="freq-btns">
+        <button class="freq-btn" onclick="setFreq(200)">5fps<br><span
+            style="font-size:9px;color:#888">高频</span></button>
+        <button class="freq-btn active" id="freq-default" onclick="setFreq(500)">2fps<br><span
+            style="font-size:9px;color:#888">推荐</span></button>
+        <button class="freq-btn" onclick="setFreq(1000)">1fps<br><span
+            style="font-size:9px;color:#888">省电</span></button>
+        <button class="freq-btn" onclick="setFreq(2000)">0.5fps<br><span
+            style="font-size:9px;color:#888">省流</span></button>
       </div>
     </div>
     <div class="ctrl-row">
@@ -239,52 +254,18 @@
   <div id="fps"></div>
 
   <!--
-=================================================================
-  模型文件放置方式（二选一）：
-
-  方式 A — 放到 repo（推荐，9.7MB 完全没问题）：
-    项目根目录创建 models/ 文件夹，把 ONNX 放进去：
-      models/yolo26n_640x640.onnx
-      models/yolo26s_640x640.onnx （可选）
-    下载地址：https://huggingface.co/AXERA-TECH/yolo26
-
-  方式 B — 自己用 Python 导出 YOLO11n：
-    pip install ultralytics
-    python -c "from ultralytics import YOLO; YOLO('yolo11n.pt').export(format='onnx')"
-    把生成的 yolo11n.onnx 放到 models/，
-    并把下方 MODEL_FILES 里的路径改为 './models/yolo11n.onnx'
-
-  两种模型输出格式完全相同（[1, 84, 8400]），代码无需修改。
-=================================================================
+  模型文件：models/yolo26l_drone_v1.onnx（94.8MB）
+  训练数据：Drone-detectionn 24k张，mAP50=97.1%
+  模型类别：只有1类 → drone（index=0）
 -->
-
-  <!-- ONNX Runtime Web（CDN UMD 版，全局变量 ort） -->
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
-
   <script>
-    // ── WASM 文件从 CDN 加载（不需要本地 .wasm）──────
     ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/';
 
-    // ── 模型路径配置 ──────────────────────────────────
-    const MODEL_FILES = {
-      yolo26n: './models/yolo26n_640x640.onnx',
-      yolo26s: './models/yolo26s_640x640.onnx',
-    };
-
-    // ── COCO 80 类名（airplane = index 4）────────────
-    const COCO_CLASSES = [
-      'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
-      'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat',
-      'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack',
-      'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball',
-      'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket',
-      'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
-      'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair',
-      'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse',
-      'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink',
-      'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
-    ];
-    const AIRPLANE_CLASS_ID = 4;
+    // ── 配置 ──────────────────────────────────────────
+    const MODEL_PATH = './models/yolo26l_drone_v1.onnx';
+    const DRONE_CLASS_ID = 0;       // 训练数据只有1类，index=0
+    let DETECT_INTERVAL = 500;      // 默认每500ms推理一次
 
     // ── DOM ───────────────────────────────────────────
     const video = document.getElementById('video');
@@ -301,49 +282,36 @@
     const progressTxt = document.getElementById('progress-text');
 
     let session = null;
-    let currentModel = 'yolo26n';
-    let isLoading = false;
     let animFrame = null;
+    let lastDetections = [];   // 缓存上次检测结果
+    let requesting = false;// 防止请求堆积
+    let lastSendTime = 0;
     let lastTime = 0, frameCount = 0, fps = 0;
 
-    // 推理用离屏 Canvas（固定 640×640）
+    // 推理用离屏 Canvas（固定640×640）
     const inferCanvas = document.createElement('canvas');
     inferCanvas.width = inferCanvas.height = 640;
     const inferCtx = inferCanvas.getContext('2d');
 
     function getThreshold() { return parseInt(threshEl.value) / 100; }
 
-    // ── 切换模型 ──────────────────────────────────────
-    window.switchModel = async function (key) {
-      if (isLoading || key === currentModel) return;
-      currentModel = key;
-      document.getElementById('btn-n').classList.toggle('active', key === 'yolo26n');
-      document.getElementById('btn-s').classList.toggle('active', key === 'yolo26s');
-      if (animFrame) cancelAnimationFrame(animFrame);
-      session = null;
-      loadingEl.style.display = 'flex';
-      loadingTxt.textContent = key === 'yolo26s' ? '加载 YOLO26s（38MB）...' : '加载 YOLO26n（9.7MB）...';
-      await loadModel(key);
-      loadingEl.style.display = 'none';
-      detect();
+    // ── 切换检测频率 ──────────────────────────────────
+    window.setFreq = function (ms) {
+      DETECT_INTERVAL = ms;
+      document.querySelectorAll('.freq-btn').forEach(b => b.classList.remove('active'));
+      event.target.closest('.freq-btn').classList.add('active');
     };
 
-    // ── 加载 ONNX（带进度条）────────────────────────
-    async function loadModel(key) {
-      isLoading = true;
+    // ── 加载模型（带进度）────────────────────────────
+    async function loadModel() {
       progressWrap.style.display = 'block';
       progressTxt.style.display = 'block';
       progressBar.style.width = '0%';
-      progressTxt.textContent = '正在下载...';
-
-      const url = MODEL_FILES[key];
+      progressTxt.textContent = '下载中...';
 
       try {
-        // fetch + ReadableStream 读取进度
-        const resp = await fetch(url);
-        if (!resp.ok) throw new Error(
-          `找不到模型文件（HTTP ${resp.status}）\n请确认 ${url} 已放入 models/ 文件夹`
-        );
+        const resp = await fetch(MODEL_PATH);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}，找不到 ${MODEL_PATH}`);
 
         const total = parseInt(resp.headers.get('Content-Length') || '0');
         const reader = resp.body.getReader();
@@ -355,13 +323,12 @@
           if (done) break;
           chunks.push(value);
           loaded += value.length;
-          const pct = total > 0 ? Math.round(loaded / total * 100) : '?';
-          progressBar.style.width = (total > 0 ? pct : 50) + '%';
+          const pct = total > 0 ? Math.round(loaded / total * 100) : 50;
+          progressBar.style.width = pct + '%';
           progressTxt.textContent =
-            `下载中 ${pct}%（${(loaded / 1024 / 1024).toFixed(1)} MB${total ? ' / ' + (total / 1024 / 1024).toFixed(1) + ' MB' : ''}）`;
+            `下载中 ${pct}%（${(loaded / 1024 / 1024).toFixed(1)}MB${total ? ' / ' + (total / 1024 / 1024).toFixed(1) + 'MB' : ''}）`;
         }
 
-        // 合并所有 chunks
         const buf = new Uint8Array(loaded);
         let offset = 0;
         for (const c of chunks) { buf.set(c, offset); offset += c.length; }
@@ -369,69 +336,56 @@
         progressBar.style.width = '100%';
         progressTxt.textContent = '初始化 ONNX Runtime...';
 
-        // 创建推理 Session
+        // 优先使用 WebGPU（GPU加速），降级到 WASM（CPU）
         session = await ort.InferenceSession.create(buf.buffer, {
-          executionProviders: ['wasm'],
+          executionProviders: ['webgpu', 'wasm'],
           graphOptimizationLevel: 'all',
         });
 
-        const outShape = Object.values(session.outputNames).join(', ');
-        statusEl.textContent = `✅ ${key} 已加载 | 输入: images [1,3,640,640] | 输出: ${outShape}`;
+        const provider = session.handler?._ep || 'wasm';
+        statusEl.textContent = `✅ YOLO26l 已加载（mAP50=97%）· ${MODEL_PATH.split('/').pop()}`;
 
       } catch (e) {
         statusEl.textContent = `❌ 加载失败：${e.message}`;
-        console.error('[YOLO 加载失败]', e);
+        console.error(e);
       }
 
       progressWrap.style.display = 'none';
       progressTxt.style.display = 'none';
-      isLoading = false;
     }
 
-    // ── 预处理：视频帧 → Tensor [1, 3, 640, 640] ────
+    // ── 预处理：视频帧 → Tensor [1,3,640,640] ────────
     function preprocess() {
       inferCtx.drawImage(video, 0, 0, 640, 640);
-      const px = inferCtx.getImageData(0, 0, 640, 640).data; // RGBA Uint8
+      const px = inferCtx.getImageData(0, 0, 640, 640).data;
       const N = 640 * 640;
       const buf = new Float32Array(3 * N);
       for (let i = 0; i < N; i++) {
-        buf[i] = px[i * 4] / 255; // R
-        buf[i + N] = px[i * 4 + 1] / 255; // G
-        buf[i + N * 2] = px[i * 4 + 2] / 255; // B
+        buf[i] = px[i * 4] / 255;
+        buf[i + N] = px[i * 4 + 1] / 255;
+        buf[i + N * 2] = px[i * 4 + 2] / 255;
       }
       return new ort.Tensor('float32', buf, [1, 3, 640, 640]);
     }
 
     // ── 后处理：解析 YOLO 输出 + NMS ─────────────────
-    //
-    // Ultralytics ONNX 标准输出 output0: [1, 84, 8400]
-    //   行 0~3  : cx, cy, w, h（单位：640×640 像素）
-    //   行 4~83 : 80 个 COCO 类别的置信度
-    //   列      : 8400 个候选框（80²+40²+20²）
-    //
+    // 标准 Ultralytics ONNX 输出：[1, 84, 8400]
+    // 行0~3: cx,cy,w,h；行4~83: 80类分数（我们只有1类）
     function postprocess(tensor, threshold) {
       const data = tensor.data;
-      const dims = tensor.dims;  // [1, 84, 8400]
-
-      let numBoxes, numAttrs;
+      const dims = tensor.dims;
 
       if (dims.length === 3 && dims[2] === 8400) {
-        // 标准格式 [1, 84, 8400]
-        numAttrs = dims[1];
-        numBoxes = dims[2];
-        return decodeStandard(data, numBoxes, numAttrs, threshold);
+        return decodeStandard(data, dims[1], dims[2], threshold);
       } else if (dims.length === 3 && dims[1] === 8400) {
-        // 转置格式 [1, 8400, 84]
-        numBoxes = dims[1];
-        numAttrs = dims[2];
-        return decodeTransposed(data, numBoxes, numAttrs, threshold);
+        return decodeTransposed(data, dims[1], dims[2], threshold);
       } else {
-        console.warn('未知输出维度:', dims, '请检查模型格式');
+        console.warn('未知输出维度:', dims);
         return [];
       }
     }
 
-    function decodeStandard(data, numBoxes, numAttrs, threshold) {
+    function decodeStandard(data, numAttrs, numBoxes, threshold) {
       const numClasses = numAttrs - 4;
       const dets = [];
       for (let i = 0; i < numBoxes; i++) {
@@ -465,11 +419,9 @@
       return nms(dets, 0.45);
     }
 
-    // ── NMS ──────────────────────────────────────────
     function nms(dets, iouThresh) {
       dets.sort((a, b) => b.score - a.score);
-      const keep = [];
-      const done = new Uint8Array(dets.length);
+      const keep = [], done = new Uint8Array(dets.length);
       for (let i = 0; i < dets.length; i++) {
         if (done[i]) continue;
         keep.push(dets[i]);
@@ -487,6 +439,68 @@
       return inter / ((a.x2 - a.x1) * (a.y2 - a.y1) + (b.x2 - b.x1) * (b.y2 - b.y1) - inter + 1e-6);
     }
 
+    // ── 异步推理（不阻塞画面渲染）────────────────────
+    async function sendFrame() {
+      if (!session || video.readyState < 2) return;
+      try {
+        const inputTensor = preprocess();
+        const inputName = session.inputNames[0];
+        const results = await session.run({ [inputName]: inputTensor });
+        const outputTensor = results[session.outputNames[0]];
+        const allDets = postprocess(outputTensor, getThreshold());
+        // 只保留无人机（class 0）
+        lastDetections = allDets.filter(d => d.classId === DRONE_CLASS_ID);
+      } catch (e) {
+        console.error('[推理错误]', e);
+      }
+      requesting = false;
+    }
+
+    // ── 画检测框 ──────────────────────────────────────
+    function drawBoxes(detections) {
+      const cw = canvas.width, ch = canvas.height;
+      const zoom = parseFloat(document.getElementById('zoom').value);
+      const srcW = cw / zoom, srcH = ch / zoom;
+      const srcX = (cw - srcW) / 2, srcY = (ch - srcH) / 2;
+      const sx = cw / 640, sy = ch / 640;
+
+      detections.forEach(d => {
+        let x = d.x1 * sx, y = d.y1 * sy;
+        let w = (d.x2 - d.x1) * sx, h = (d.y2 - d.y1) * sy;
+        x = (x - srcX) * zoom;
+        y = (y - srcY) * zoom;
+        w = w * zoom; h = h * zoom;
+
+        // 红色边框
+        ctx.strokeStyle = '#e53e3e';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(x, y, w, h);
+
+        // 角标装饰
+        const corner = 12;
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        [[x, y], [x + w, y], [x, y + h], [x + w, y + h]].forEach(([cx, cy]) => {
+          const dx = cx === x ? 1 : -1;
+          const dy = cy === y ? 1 : -1;
+          ctx.beginPath();
+          ctx.moveTo(cx + dx * corner, cy);
+          ctx.lineTo(cx, cy);
+          ctx.lineTo(cx, cy + dy * corner);
+          ctx.stroke();
+        });
+
+        // 标签
+        const label = `🚁 无人机 ${Math.round(d.score * 100)}%`;
+        ctx.font = 'bold 14px sans-serif';
+        const tw = ctx.measureText(label).width;
+        ctx.fillStyle = '#e53e3e';
+        ctx.fillRect(x, y - 26, tw + 14, 26);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(label, x + 7, y - 7);
+      });
+    }
+
     // ── 初始化 ────────────────────────────────────────
     async function init() {
       try {
@@ -498,89 +512,46 @@
         await new Promise(r => video.onloadedmetadata = r);
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
-        loadingTxt.textContent = '加载 YOLO26n 模型（9.7MB）...';
+        loadingTxt.textContent = '加载 YOLO26l 无人机模型（94.8MB）...';
       } catch (e) {
         loadingTxt.textContent = '无法访问摄像头：' + e.message;
         return;
       }
-      await loadModel('yolo26n');
+
+      await loadModel();
       loadingEl.style.display = 'none';
       detect();
     }
 
-    // ── 检测主循环 ────────────────────────────────────
+    // ── 检测主循环（异步，画面始终流畅）─────────────
     async function detect() {
-      if (!session || video.readyState < 2) {
-        animFrame = requestAnimationFrame(detect);
-        return;
-      }
-
-      const threshold = getThreshold();
-      const zoom = parseFloat(document.getElementById('zoom').value);
       const cw = canvas.width, ch = canvas.height;
+      const zoom = parseFloat(document.getElementById('zoom').value);
       const srcW = cw / zoom, srcH = ch / zoom;
       const srcX = (cw - srcW) / 2, srcY = (ch - srcH) / 2;
 
-      // ① 推理
-      let airplanes = [];
-      try {
-        const inputTensor = preprocess();
-        const inputName = session.inputNames[0];   // 'images'
-        const results = await session.run({ [inputName]: inputTensor });
-        const outputTensor = results[session.outputNames[0]]; // 'output0'
-        const allDets = postprocess(outputTensor, threshold);
-        airplanes = allDets.filter(d => d.classId === AIRPLANE_CLASS_ID);
-
-        // 若要显示所有类别而非仅飞机，把上面两行换成：
-        // airplanes = allDets;
-
-      } catch (e) {
-        console.error('[推理错误]', e);
-        animFrame = requestAnimationFrame(detect);
-        return;
-      }
-
-      // ② 渲染帧（支持数字变焦）
+      // 始终渲染最新画面（60fps 流畅）
       ctx.clearRect(0, 0, cw, ch);
       ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, cw, ch);
 
-      // ③ 画检测框
-      // YOLO 坐标在 640×640 空间，需缩放到 canvas 分辨率
-      const sx = cw / 640, sy = ch / 640;
+      // 用上次缓存的检测结果画框
+      drawBoxes(lastDetections);
+      badge.style.display = lastDetections.length > 0 ? 'block' : 'none';
 
-      airplanes.forEach(d => {
-        let x = d.x1 * sx, y = d.y1 * sy;
-        let w = (d.x2 - d.x1) * sx, h = (d.y2 - d.y1) * sy;
-
-        // 变焦偏移
-        x = (x - srcX) * zoom;
-        y = (y - srcY) * zoom;
-        w = w * zoom;
-        h = h * zoom;
-
-        // 红色边框
-        ctx.strokeStyle = '#e53e3e';
-        ctx.lineWidth = 3;
-        ctx.strokeRect(x, y, w, h);
-
-        // 标签
-        const label = `✈ 飞机 ${Math.round(d.score * 100)}%`;
-        ctx.font = 'bold 15px sans-serif';
-        const tw = ctx.measureText(label).width;
-        ctx.fillStyle = '#e53e3e';
-        ctx.fillRect(x, y - 26, tw + 14, 26);
-        ctx.fillStyle = '#fff';
-        ctx.fillText(label, x + 7, y - 7);
-      });
-
-      badge.style.display = airplanes.length > 0 ? 'block' : 'none';
+      // 按设定频率异步发送推理请求
+      const now = Date.now();
+      if (!requesting && session && now - lastSendTime > DETECT_INTERVAL) {
+        lastSendTime = now;
+        requesting = true;
+        sendFrame();  // 异步，不等待
+      }
 
       // FPS
       frameCount++;
-      const now = performance.now();
       if (now - lastTime >= 1000) {
         fps = frameCount; frameCount = 0; lastTime = now;
-        fpsEl.textContent = `${fps} fps · YOLO26n ONNX`;
+        const inferHz = (1000 / DETECT_INTERVAL).toFixed(1);
+        fpsEl.textContent = `渲染 ${fps}fps · 推理 ${inferHz}fps · YOLO26l`;
       }
 
       animFrame = requestAnimationFrame(detect);
