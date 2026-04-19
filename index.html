@@ -439,10 +439,9 @@
     // ── 后处理：自动兼容三种输出格式 ─────────────────
     function postprocess(tensor, threshold) {
       const data = tensor.data;
-      const dims = tensor.dims;
+      // 转换为普通数字数组，避免BigInt比较问题
+      const dims = Array.from(tensor.dims).map(Number);
 
-      // 格式1：[1, 300, 6] NMS-free（YOLO26 end-to-end）
-      // 每行：x1, y1, x2, y2, score, class_id
       if (dims.length === 3 && dims[1] <= 300 && dims[2] === 6) {
         const numBoxes = dims[1];
         const dets = [];
