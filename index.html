@@ -134,35 +134,7 @@
       height: 100%;
     }
 
-    #badge {
-      position: fixed;
-      top: 16px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: #e53e3e;
-      color: #fff;
-      padding: 8px 20px;
-      border-radius: 20px;
-      font-size: 14px;
-      font-weight: bold;
-      display: none;
-      z-index: 10;
-      letter-spacing: 1px;
-      box-shadow: 0 2px 12px rgba(229, 62, 62, 0.5);
-      animation: pulse 1s ease-in-out infinite;
-    }
 
-    @keyframes pulse {
-
-      0%,
-      100% {
-        box-shadow: 0 2px 12px rgba(229, 62, 62, 0.5);
-      }
-
-      50% {
-        box-shadow: 0 2px 24px rgba(229, 62, 62, 0.9);
-      }
-    }
 
     #fps {
       position: fixed;
@@ -241,7 +213,7 @@
     <p id="progress-text"></p>
   </div>
 
-  <div id="badge">🚁 检测到无人机！</div>
+
 
   <div id="controls">
     <div class="ctrl-row">
@@ -304,7 +276,6 @@
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
-    const badge = document.getElementById('badge');
     const fpsEl = document.getElementById('fps');
     const loadingEl = document.getElementById('loading');
     const loadingTxt = document.getElementById('loading-text');
@@ -411,7 +382,7 @@
           outputFormat = 'unknown';
         }
 
-        statusEl.textContent = `✅ ${m.label}已就绪（${m.size}）· 专项无人机检测模型 · 格式:${outputFormat}`;
+        statusEl.textContent = `✅ ${m.label}已就绪（${m.size}）· 专项无人机检测模型`;
 
       } catch (e) {
         statusEl.textContent = `❌ 加载失败：${e.message}`;
@@ -439,9 +410,10 @@
     // ── 后处理：自动兼容三种输出格式 ─────────────────
     function postprocess(tensor, threshold) {
       const data = tensor.data;
-      // 转换为普通数字数组，避免BigInt比较问题
-      const dims = Array.from(tensor.dims).map(Number);
+      const dims = tensor.dims;
 
+      // 格式1：[1, 300, 6] NMS-free（YOLO26 end-to-end）
+      // 每行：x1, y1, x2, y2, score, class_id
       if (dims.length === 3 && dims[1] <= 300 && dims[2] === 6) {
         const numBoxes = dims[1];
         const dets = [];
@@ -610,7 +582,7 @@
       ctx.clearRect(0, 0, cw, ch);
       ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, cw, ch);
       drawBoxes(lastDetections);
-      badge.style.display = lastDetections.length > 0 ? 'block' : 'none';
+
 
       const now = Date.now();
       if (!requesting && session && now - lastSendTime > DETECT_INTERVAL) {
