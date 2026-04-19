@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>无人机检测 Demo · YOLO26l</title>
+  <title>无人机检测 Demo</title>
   <style>
     * {
       margin: 0;
@@ -56,6 +56,30 @@
       flex: 1;
       height: 4px;
       accent-color: #e53e3e;
+    }
+
+    .model-btns {
+      display: flex;
+      gap: 8px;
+      flex: 1;
+    }
+
+    .model-btn {
+      flex: 1;
+      padding: 6px 0;
+      border-radius: 6px;
+      border: 1px solid #444;
+      background: #222;
+      color: #aaa;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .model-btn.active {
+      background: #e53e3e;
+      border-color: #e53e3e;
+      color: #fff;
     }
 
     .freq-btns {
@@ -178,6 +202,8 @@
     #loading-text {
       font-size: 14px;
       color: #aaa;
+      text-align: center;
+      padding: 0 20px;
     }
 
     #progress-wrap {
@@ -219,23 +245,30 @@
 
   <div id="controls">
     <div class="ctrl-row">
-      <span class="ctrl-label">检测频率</span>
-      <div class="freq-btns">
-        <button class="freq-btn" onclick="setFreq(200)">5fps<br><span
-            style="font-size:9px;color:#888">高频</span></button>
-        <button class="freq-btn active" id="freq-default" onclick="setFreq(500)">2fps<br><span
-            style="font-size:9px;color:#888">推荐</span></button>
-        <button class="freq-btn" onclick="setFreq(1000)">1fps<br><span
-            style="font-size:9px;color:#888">省电</span></button>
-        <button class="freq-btn" onclick="setFreq(2000)">0.5fps<br><span
-            style="font-size:9px;color:#888">省流</span></button>
+      <span class="ctrl-label">检测模型</span>
+      <div class="model-btns">
+        <button class="model-btn active" id="btn-fast" onclick="switchModel('fast')">
+          快速版<br><span style="font-size:10px;color:#888">流畅 · 10MB</span>
+        </button>
+        <button class="model-btn" id="btn-accurate" onclick="switchModel('accurate')">
+          精准版<br><span style="font-size:10px;color:#888">准确 · 95MB</span>
+        </button>
       </div>
     </div>
     <div class="ctrl-row">
-      <span class="ctrl-label">置信度</span>
-      <input type="range" id="threshold" min="5" max="80" value="35" step="5"
+      <span class="ctrl-label">检测频率</span>
+      <div class="freq-btns">
+        <button class="freq-btn" onclick="setFreq(200, this)">5次/秒</button>
+        <button class="freq-btn active" onclick="setFreq(500, this)">2次/秒</button>
+        <button class="freq-btn" onclick="setFreq(1000, this)">1次/秒</button>
+        <button class="freq-btn" onclick="setFreq(2000, this)">省流量</button>
+      </div>
+    </div>
+    <div class="ctrl-row">
+      <span class="ctrl-label">灵敏度</span>
+      <input type="range" id="threshold" min="5" max="80" value="25" step="5"
         oninput="document.getElementById('thresh-val').textContent=this.value+'%'">
-      <span class="ctrl-value" id="thresh-val">35%</span>
+      <span class="ctrl-value" id="thresh-val">25%</span>
     </div>
     <div class="ctrl-row">
       <span class="ctrl-label">数字变焦</span>
@@ -245,7 +278,7 @@
     </div>
   </div>
 
-  <div id="status">等待模型加载...</div>
+  <div id="status">等待加载...</div>
 
   <div id="container">
     <video id="video" autoplay playsinline muted></video>
@@ -253,19 +286,18 @@
   </div>
   <div id="fps"></div>
 
-  <!--
-  模型文件：models/yolo26l_drone_v1.onnx（94.8MB）
-  训练数据：Drone-detectionn 24k张，mAP50=97.1%
-  模型类别：只有1类 → drone（index=0）
--->
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
   <script>
     ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/';
 
-    // ── 配置 ──────────────────────────────────────────
-    const MODEL_PATH = './models/yolo26l_drone_v1.onnx';
-    const DRONE_CLASS_ID = 0;       // 训练数据只有1类，index=0
-    let DETECT_INTERVAL = 500;      // 默认每500ms推理一次
+    // ── 模型配置 ──────────────────────────────────────
+    const MODELS = {
+      fast: { path: './models/yolo26n_drone_v1.onnx', label: '快速版', size: '10MB' },
+      accurate: { path: './models/yolo26l_drone_v1.onnx', label: '精准版', size: '95MB' },
+    };
+    const DRONE_CLASS_ID = 0;
+    let DETECT_INTERVAL = 500;
+    let currentModelKey = 'fast';
 
     // ── DOM ───────────────────────────────────────────
     const video = document.getElementById('video');
@@ -283,35 +315,51 @@
 
     let session = null;
     let animFrame = null;
-    let lastDetections = [];   // 缓存上次检测结果
-    let requesting = false;// 防止请求堆积
+    let lastDetections = [];
+    let requesting = false;
     let lastSendTime = 0;
-    let lastTime = 0, frameCount = 0, fps = 0;
+    let lastTime = 0, frameCount = 0;
 
-    // 推理用离屏 Canvas（固定640×640）
     const inferCanvas = document.createElement('canvas');
     inferCanvas.width = inferCanvas.height = 640;
     const inferCtx = inferCanvas.getContext('2d');
 
     function getThreshold() { return parseInt(threshEl.value) / 100; }
 
-    // ── 切换检测频率 ──────────────────────────────────
-    window.setFreq = function (ms) {
+    // ── 切换频率 ──────────────────────────────────────
+    window.setFreq = function (ms, btn) {
       DETECT_INTERVAL = ms;
       document.querySelectorAll('.freq-btn').forEach(b => b.classList.remove('active'));
-      event.target.closest('.freq-btn').classList.add('active');
+      btn.classList.add('active');
     };
 
-    // ── 加载模型（带进度）────────────────────────────
-    async function loadModel() {
+    // ── 切换模型 ──────────────────────────────────────
+    window.switchModel = async function (key) {
+      if (key === currentModelKey) return;
+      currentModelKey = key;
+      document.getElementById('btn-fast').classList.toggle('active', key === 'fast');
+      document.getElementById('btn-accurate').classList.toggle('active', key === 'accurate');
+      if (animFrame) cancelAnimationFrame(animFrame);
+      session = null;
+      lastDetections = [];
+      loadingEl.style.display = 'flex';
+      loadingTxt.textContent = `切换到${MODELS[key].label}...`;
+      await loadModel(key);
+      loadingEl.style.display = 'none';
+      detect();
+    };
+
+    // ── 加载模型 ──────────────────────────────────────
+    async function loadModel(key) {
+      const m = MODELS[key];
       progressWrap.style.display = 'block';
       progressTxt.style.display = 'block';
       progressBar.style.width = '0%';
-      progressTxt.textContent = '下载中...';
+      progressTxt.textContent = '准备下载...';
 
       try {
-        const resp = await fetch(MODEL_PATH);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}，找不到 ${MODEL_PATH}`);
+        const resp = await fetch(m.path);
+        if (!resp.ok) throw new Error(`找不到模型文件（HTTP ${resp.status}）`);
 
         const total = parseInt(resp.headers.get('Content-Length') || '0');
         const reader = resp.body.getReader();
@@ -334,16 +382,14 @@
         for (const c of chunks) { buf.set(c, offset); offset += c.length; }
 
         progressBar.style.width = '100%';
-        progressTxt.textContent = '初始化 ONNX Runtime...';
+        progressTxt.textContent = '初始化检测引擎...';
 
-        // 优先使用 WebGPU（GPU加速），降级到 WASM（CPU）
         session = await ort.InferenceSession.create(buf.buffer, {
           executionProviders: ['webgpu', 'wasm'],
           graphOptimizationLevel: 'all',
         });
 
-        const provider = session.handler?._ep || 'wasm';
-        statusEl.textContent = `✅ YOLO26l 已加载（mAP50=97%）· ${MODEL_PATH.split('/').pop()}`;
+        statusEl.textContent = `✅ ${m.label}已就绪（${m.size}）· 专项无人机检测模型`;
 
       } catch (e) {
         statusEl.textContent = `❌ 加载失败：${e.message}`;
@@ -354,7 +400,7 @@
       progressTxt.style.display = 'none';
     }
 
-    // ── 预处理：视频帧 → Tensor [1,3,640,640] ────────
+    // ── 预处理 ────────────────────────────────────────
     function preprocess() {
       inferCtx.drawImage(video, 0, 0, 640, 640);
       const px = inferCtx.getImageData(0, 0, 640, 640).data;
@@ -368,65 +414,51 @@
       return new ort.Tensor('float32', buf, [1, 3, 640, 640]);
     }
 
-    // ── 后处理：解析 YOLO 输出 + NMS ─────────────────
-    // 标准 Ultralytics ONNX 输出：[1, 84, 8400]
-    // 行0~3: cx,cy,w,h；行4~83: 80类分数（我们只有1类）
+    // ── 后处理 ────────────────────────────────────────
     function postprocess(tensor, threshold) {
       const data = tensor.data;
       const dims = tensor.dims;
-
-      if (dims.length === 3 && dims[2] === 8400) {
-        return decodeStandard(data, dims[1], dims[2], threshold);
-      } else if (dims.length === 3 && dims[1] === 8400) {
-        return decodeTransposed(data, dims[1], dims[2], threshold);
-      } else {
-        console.warn('未知输出维度:', dims);
-        return [];
-      }
+      if (dims.length === 3 && dims[2] === 8400) return decodeStd(data, dims[1], dims[2], threshold);
+      if (dims.length === 3 && dims[1] === 8400) return decodeTrp(data, dims[1], dims[2], threshold);
+      console.warn('未知输出维度:', dims);
+      return [];
     }
 
-    function decodeStandard(data, numAttrs, numBoxes, threshold) {
-      const numClasses = numAttrs - 4;
+    function decodeStd(data, numAttrs, numBoxes, thr) {
+      const nc = numAttrs - 4;
       const dets = [];
       for (let i = 0; i < numBoxes; i++) {
-        let maxScore = 0, maxCls = -1;
-        for (let c = 0; c < numClasses; c++) {
-          const s = data[(4 + c) * numBoxes + i];
-          if (s > maxScore) { maxScore = s; maxCls = c; }
-        }
-        if (maxScore < threshold) continue;
-        const cx = data[0 * numBoxes + i], cy = data[1 * numBoxes + i];
-        const w = data[2 * numBoxes + i], h = data[3 * numBoxes + i];
-        dets.push({ x1: cx - w / 2, y1: cy - h / 2, x2: cx + w / 2, y2: cy + h / 2, score: maxScore, classId: maxCls });
+        let ms = 0, mc = -1;
+        for (let c = 0; c < nc; c++) { const s = data[(4 + c) * numBoxes + i]; if (s > ms) { ms = s; mc = c; } }
+        if (ms < thr) continue;
+        const cx = data[0 * numBoxes + i], cy = data[1 * numBoxes + i], w = data[2 * numBoxes + i], h = data[3 * numBoxes + i];
+        dets.push({ x1: cx - w / 2, y1: cy - h / 2, x2: cx + w / 2, y2: cy + h / 2, score: ms, classId: mc });
       }
       return nms(dets, 0.45);
     }
 
-    function decodeTransposed(data, numBoxes, numAttrs, threshold) {
-      const numClasses = numAttrs - 4;
+    function decodeTrp(data, numBoxes, numAttrs, thr) {
+      const nc = numAttrs - 4;
       const dets = [];
       for (let i = 0; i < numBoxes; i++) {
         const base = i * numAttrs;
-        let maxScore = 0, maxCls = -1;
-        for (let c = 0; c < numClasses; c++) {
-          const s = data[base + 4 + c];
-          if (s > maxScore) { maxScore = s; maxCls = c; }
-        }
-        if (maxScore < threshold) continue;
+        let ms = 0, mc = -1;
+        for (let c = 0; c < nc; c++) { const s = data[base + 4 + c]; if (s > ms) { ms = s; mc = c; } }
+        if (ms < thr) continue;
         const cx = data[base], cy = data[base + 1], w = data[base + 2], h = data[base + 3];
-        dets.push({ x1: cx - w / 2, y1: cy - h / 2, x2: cx + w / 2, y2: cy + h / 2, score: maxScore, classId: maxCls });
+        dets.push({ x1: cx - w / 2, y1: cy - h / 2, x2: cx + w / 2, y2: cy + h / 2, score: ms, classId: mc });
       }
       return nms(dets, 0.45);
     }
 
-    function nms(dets, iouThresh) {
+    function nms(dets, iouThr) {
       dets.sort((a, b) => b.score - a.score);
       const keep = [], done = new Uint8Array(dets.length);
       for (let i = 0; i < dets.length; i++) {
         if (done[i]) continue;
         keep.push(dets[i]);
         for (let j = i + 1; j < dets.length; j++) {
-          if (!done[j] && iou(dets[i], dets[j]) > iouThresh) done[j] = 1;
+          if (!done[j] && iou(dets[i], dets[j]) > iouThr) done[j] = 1;
         }
       }
       return keep;
@@ -439,16 +471,14 @@
       return inter / ((a.x2 - a.x1) * (a.y2 - a.y1) + (b.x2 - b.x1) * (b.y2 - b.y1) - inter + 1e-6);
     }
 
-    // ── 异步推理（不阻塞画面渲染）────────────────────
+    // ── 异步推理 ──────────────────────────────────────
     async function sendFrame() {
-      if (!session || video.readyState < 2) return;
+      if (!session || video.readyState < 2) { requesting = false; return; }
       try {
         const inputTensor = preprocess();
-        const inputName = session.inputNames[0];
-        const results = await session.run({ [inputName]: inputTensor });
+        const results = await session.run({ [session.inputNames[0]]: inputTensor });
         const outputTensor = results[session.outputNames[0]];
         const allDets = postprocess(outputTensor, getThreshold());
-        // 只保留无人机（class 0）
         lastDetections = allDets.filter(d => d.classId === DRONE_CLASS_ID);
       } catch (e) {
         console.error('[推理错误]', e);
@@ -456,37 +486,33 @@
       requesting = false;
     }
 
-    // ── 画检测框 ──────────────────────────────────────
-    function drawBoxes(detections) {
+    // ── 画框 ──────────────────────────────────────────
+    function drawBoxes(dets) {
       const cw = canvas.width, ch = canvas.height;
       const zoom = parseFloat(document.getElementById('zoom').value);
       const srcW = cw / zoom, srcH = ch / zoom;
       const srcX = (cw - srcW) / 2, srcY = (ch - srcH) / 2;
       const sx = cw / 640, sy = ch / 640;
 
-      detections.forEach(d => {
+      dets.forEach(d => {
         let x = d.x1 * sx, y = d.y1 * sy;
         let w = (d.x2 - d.x1) * sx, h = (d.y2 - d.y1) * sy;
-        x = (x - srcX) * zoom;
-        y = (y - srcY) * zoom;
+        x = (x - srcX) * zoom; y = (y - srcY) * zoom;
         w = w * zoom; h = h * zoom;
 
-        // 红色边框
+        // 主边框
         ctx.strokeStyle = '#e53e3e';
         ctx.lineWidth = 3;
         ctx.strokeRect(x, y, w, h);
 
-        // 角标装饰
-        const corner = 12;
+        // 四角装饰
+        const c = 14;
         ctx.strokeStyle = '#fff';
         ctx.lineWidth = 2;
         [[x, y], [x + w, y], [x, y + h], [x + w, y + h]].forEach(([cx, cy]) => {
-          const dx = cx === x ? 1 : -1;
-          const dy = cy === y ? 1 : -1;
+          const dx = cx === x ? 1 : -1, dy = cy === y ? 1 : -1;
           ctx.beginPath();
-          ctx.moveTo(cx + dx * corner, cy);
-          ctx.lineTo(cx, cy);
-          ctx.lineTo(cx, cy + dy * corner);
+          ctx.moveTo(cx + dx * c, cy); ctx.lineTo(cx, cy); ctx.lineTo(cx, cy + dy * c);
           ctx.stroke();
         });
 
@@ -512,46 +538,39 @@
         await new Promise(r => video.onloadedmetadata = r);
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
-        loadingTxt.textContent = '加载 YOLO26l 无人机模型（94.8MB）...';
+        loadingTxt.textContent = '加载快速检测模型（10MB）...';
       } catch (e) {
         loadingTxt.textContent = '无法访问摄像头：' + e.message;
         return;
       }
-
-      await loadModel();
+      await loadModel('fast');
       loadingEl.style.display = 'none';
       detect();
     }
 
-    // ── 检测主循环（异步，画面始终流畅）─────────────
-    async function detect() {
+    // ── 主循环 ────────────────────────────────────────
+    function detect() {
       const cw = canvas.width, ch = canvas.height;
       const zoom = parseFloat(document.getElementById('zoom').value);
       const srcW = cw / zoom, srcH = ch / zoom;
       const srcX = (cw - srcW) / 2, srcY = (ch - srcH) / 2;
 
-      // 始终渲染最新画面（60fps 流畅）
       ctx.clearRect(0, 0, cw, ch);
       ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, cw, ch);
-
-      // 用上次缓存的检测结果画框
       drawBoxes(lastDetections);
       badge.style.display = lastDetections.length > 0 ? 'block' : 'none';
 
-      // 按设定频率异步发送推理请求
       const now = Date.now();
       if (!requesting && session && now - lastSendTime > DETECT_INTERVAL) {
         lastSendTime = now;
         requesting = true;
-        sendFrame();  // 异步，不等待
+        sendFrame();
       }
 
-      // FPS
       frameCount++;
       if (now - lastTime >= 1000) {
-        fps = frameCount; frameCount = 0; lastTime = now;
-        const inferHz = (1000 / DETECT_INTERVAL).toFixed(1);
-        fpsEl.textContent = `渲染 ${fps}fps · 推理 ${inferHz}fps · YOLO26l`;
+        const fps = frameCount; frameCount = 0; lastTime = now;
+        fpsEl.textContent = `渲染 ${fps}fps · 检测 ${(1000 / DETECT_INTERVAL).toFixed(1)}次/秒`;
       }
 
       animFrame = requestAnimationFrame(detect);
